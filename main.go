@@ -51,6 +51,8 @@ func verifyToken(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the token is present
 	if tokenString == "" {
+
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		response := map[string]interface{}{
 			"status":  401,
@@ -69,6 +71,8 @@ func verifyToken(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		response := map[string]interface{}{
 			"status":  401,
@@ -97,6 +101,8 @@ func verifyToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The token is not valid or doesn't match the last valid token
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	response := map[string]interface{}{
 		"status":  401,
@@ -109,6 +115,8 @@ func generateToken(w http.ResponseWriter, r *http.Request) {
 	// Parse the JSON request body into the Credentials struct
 	var credentials Credentials
 	if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil {
+
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		response := map[string]interface{}{
 			"status":  400,
@@ -132,6 +140,8 @@ func generateToken(w http.ResponseWriter, r *http.Request) {
 			// The last token is still valid, return it along with its expiration time
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
+
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				response := map[string]interface{}{
 					"status":  500,
@@ -158,6 +168,7 @@ func generateToken(w http.ResponseWriter, r *http.Request) {
 	// Generate a new JWT token for the specified username
 	token, expirationDate, err := generateJWT(credentials.Username)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		response := map[string]interface{}{
 			"status":  500,
@@ -186,6 +197,8 @@ func destroyToken(w http.ResponseWriter, r *http.Request) {
 	// Parse the JSON request body into the Credentials struct
 	var credentials Credentials
 	if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil {
+
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		response := map[string]interface{}{
 			"status":  400,
@@ -224,6 +237,8 @@ func destroyToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If no valid token exists for this username, return an error response
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	response := map[string]interface{}{
 		"status":  401,
@@ -232,10 +247,103 @@ func destroyToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func verifyTokenMiddleware(nextRequest http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenString := r.Header.Get("Token")
+
+		// Check if the token is present
+		if tokenString == "" {
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			response := map[string]interface{}{
+				"status":  401,
+				"message": "Unauthorized",
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		// Parse the token
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if token.Method != jwt.SigningMethodHS256 {
+				return nil, fmt.Errorf("Invalid token signing method")
+			}
+			return secretKey, nil
+		})
+		if token.Valid && err == nil {
+			// Check if a valid token exists for this username in the lastValidTokens map
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				username := claims["username"].(string)
+				if lastToken, ok := lastValidTokens[username]; ok && lastToken == tokenString {
+					// The token matches the last valid token for this username
+					// Token is valid, call the nextRequest handler
+					nextRequest.ServeHTTP(w, r)
+				} else {
+
+					// kaldirilacak
+					nextRequest.ServeHTTP(w, r)
+					return
+
+					// The token is not valid or doesn't match the last valid token
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					response := map[string]interface{}{
+						"status":  401,
+						"message": "Unauthorized",
+					}
+					json.NewEncoder(w).Encode(response)
+					return
+				}
+			}
+		} else {
+			// The token is not valid or doesn't match the last valid token
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			response := map[string]interface{}{
+				"status":  401,
+				"message": "Unauthorized",
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	})
+}
+
+func getCounter(w http.ResponseWriter, req *http.Request) {
+	fmt.Println("aaaaaaaaaaaaaaaaaaaaaa")
+
+	switch req.Method {
+	case "GET":
+		// Dummy data for testing
+		dummyData := []byte(`{"item1": "value1", "item2": "value2"}`)
+		data, _ := json.Marshal(dummyData)
+		_, err := fmt.Fprint(w, string(data))
+		if err != nil {
+			return
+		}
+	case "POST":
+		_, err := fmt.Fprintf(w, "Updated")
+		if err != nil {
+			return
+		}
+	default:
+		_, err := fmt.Fprintf(w, "Only supported methods are GET and POST")
+		if err != nil {
+			return
+		}
+
+	}
+}
+
 func main() {
 	http.HandleFunc("/generateToken", generateToken)
 	http.HandleFunc("/verifyToken", verifyToken)
 	http.HandleFunc("/destroyToken", destroyToken)
+	http.HandleFunc("/getCounter", getCounter)
+
+	// Wrap the getCounter handler with the verifyTokenMiddleware
+	http.Handle("/", verifyTokenMiddleware(http.HandlerFunc(getCounter)))
 
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
