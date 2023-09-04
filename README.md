@@ -15,7 +15,7 @@ Before running this application, make sure you have the following prerequisites 
 1. Clone the repository:
 
 ```bash
-   git clone https://github.com/yourusername/go-token.git
+   git clone https://github.com/ahmedMHasan/go-token.git
    cd go-token
 ```
 
